@@ -27,7 +27,8 @@ def main(job_id, params):
                                         encoder=params['encoder'][0],
                                         use_preemb=params['use_preemb'][0],
                                         dataset='book', 
-                                        use_dropout=params['use-dropout'][0])
+                                        use_dropout=params['use-dropout'][0],
+                                        embeddings=params['embeddings'][0])
     return validerr
 
 if __name__ == '__main__':
@@ -47,5 +48,6 @@ if __name__ == '__main__':
              'decoder': ['gru_cond'],
              'use_preemb': [False],
              'reload': [False],
-             'dictionary': ['../Files/books_test_small.txt.dict.pkl']})
+             'dictionary': ['../Files/books_test_small.txt.dict.pkl'],
+             'embeddings': ['../Files/D_medium_cbow.pjk']})
 

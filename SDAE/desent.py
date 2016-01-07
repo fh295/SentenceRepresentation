@@ -19,11 +19,8 @@ from nltk.tokenize import wordpunct_tokenize
 import wiki, book, msrp
 
 profile = False
-datasets = {'wiki': wiki.load_data,
-           'book': book.load_data,
-             'msrp_s2s': msrp.load_data_s2s,
-              'msrp': msrp.load_data}
-
+datasets = {'book': book.load_data}
+             
 def get_dataset(name):
     return datasets[name]
 
@@ -763,5 +760,308 @@ def perplexity(f_cost, lines, worddict, options, verbose=False, wv_embs=None):
             print 'Sentence ', i, '/', n_lines, ' (', seq.mean(), '):', 2 ** (cost_one/len(seq)/numpy.log(2)), ', ', cost_one/len(seq)
     cost = cost / n_words
     return cost
+
+def train(dim_word=100, # word vector dimensionality
+          dim=1000, # the number of RNN units
+          patience=10,
+          max_epochs=5000,
+          dispFreq=100,
+          corruption=['_mask', '_shuffle'],
+          corruption_prob=[0.1, 0.1],
+          decay_c=0., 
+          lrate=0.01, 
+          clip_c=-1.,
+          param_noise=0.,
+          n_words=50000,
+          maxlen=100, # maximum length of the description
+          optimizer='adam', 
+          batch_size = 16,
+          valid_batch_size = 16,
+          saveto='model.npz',
+          validFreq=1000,
+          saveFreq=1000, # save the parameters after every saveFreq updates
+          encoder='gru',
+          decoder='gru_cond',
+          dataset='wiki',
+          use_preemb=True,
+          embeddings='data/D_cbow_pdw_8B.pkl',
+          dictionary='data/model_rnn_wiki.npz.pkl',
+          valid_text='newsdev.tok.en',
+          test_text='newstest.tok.en',
+          use_dropout=False,
+          reload_=False):
+
+    # Model options
+    model_options = locals().copy()
+
+    if dictionary:
+        with open(dictionary, 'rb') as f:
+            worddict = pkl.load(f)
+        word_idict = dict()
+        for kk, vv in worddict.iteritems():
+            word_idict[vv] = kk
+
+    if use_preemb:
+        assert dictionary, 'Dictionary must be provided'
+
+        with open(embeddings, 'rb') as f:
+            wv = pkl.load(f)
+        wv_embs = numpy.zeros((len(worddict.keys()), len(wv.values()[0])), dtype='float32')
+        for ii, vv in wv.iteritems():
+            if ii in worddict:
+                wv_embs[worddict[ii],:] = vv
+        wv_embs = wv_embs.astype('float32')
+        model_options['dim_word'] = wv_embs.shape[1]
+    else:
+        wv_embs = None
+
+    # reload options
+    if reload_ and os.path.exists(saveto):
+        with open('%s.pkl'%saveto, 'rb') as f:
+            reloaded_options = pkl.load(f)
+            model_options.update(reloaded_options)
+
+    print 'Loading data'
+    load_data = get_dataset(dataset)
+    train, valid, test = load_data(batch_size=batch_size)
+
+    print 'Building model'
+    params = init_params(model_options)
+    # reload parameters
+    if reload_ and os.path.exists(saveto):
+        params = load_params(saveto, params)
+
+    tparams = init_tparams(params)
+    trng, use_noise, \
+          x, x_mask, x_noise, xn_mask, \
+          ctx, \
+          cost = \
+          build_model(tparams, model_options)
+    inps = [x, x_mask, x_noise, xn_mask]
+
+    if param_noise > 0.:
+        noise_update = []
+        noise_tparams = OrderedDict()
+        for kk, vv in tparams.iteritems():
+            noise_tparams[kk] = theano.shared(vv.get_value() * 0.)
+            noise_update.append((noise_tparams[kk], param_noise * trng.normal(vv.shape)))
+        f_noise = theano.function([], [], updates=noise_update)
+        add_update = []
+        rem_update = []
+        for vv, nn in zip(tparams.values(), noise_tparams.values()):
+            add_update.append((vv, vv + nn))
+            rem_update.append((vv, vv - nn))
+        f_add_noise = theano.function([], [], updates=add_update)
+        f_rem_noise = theano.function([], [], updates=rem_update)
+
+    # before any regularizer
+    print 'Building f_log_probs...',
+    f_log_probs = theano.function(inps, cost)
+    print 'Done'
+
+    # sentence representation
+    print 'Building f_ctx...',
+    f_ctx = theano.function([x_noise, xn_mask], ctx)
+    print 'Done'
+
+    if decay_c > 0.:
+        decay_c = theano.shared(numpy.float32(decay_c), name='decay_c')
+        weight_decay = 0.
+        for kk, vv in tparams.iteritems():
+            weight_decay += (vv ** 2).sum()
+        weight_decay *= decay_c
+        cost += weight_decay
+
+    # after any regularizer
+    print 'Building f_cost...',
+    f_cost = theano.function(inps, cost)
+    print 'Done'
+
+    print 'Computing gradient...',
+    grads = tensor.grad(cost, wrt=itemlist(tparams))
+    f_grad = theano.function(inps, grads)
+    print 'Done'
+
+    if clip_c > 0.:
+        g2 = 0.
+        for g in grads:
+            g2 += (g**2).sum()
+        new_grads = []
+        for g in grads:
+            new_grads.append(tensor.switch(g2 > (clip_c**2), 
+                                           g / tensor.sqrt(g2) * clip_c,
+                                           g))
+        grads = new_grads
+
+    lr = tensor.scalar(name='lr')
+    print 'Building optimizers...',
+    f_grad_shared, f_update = eval(optimizer)(lr, tparams, grads, inps, cost)
+    print 'Done'
+
+    print 'Optimization'
+
+    history_errs = []
+    # reload history
+    if reload_ and os.path.exists(saveto):
+        history_errs = list(numpy.load(saveto)['history_errs'])
+    best_p = None
+    bad_count = 0
+
+    if validFreq == -1:
+        validFreq = len(train[0])/batch_size
+    if saveFreq == -1:
+        saveFreq = len(train[0])/batch_size
+
+    # validation and test
+    if valid_text:
+        valid_lines = []
+        with open(valid_text, 'r') as f:
+            for l in f:
+                valid_lines.append(l.lower())
+        n_valid_lines = len(valid_lines)
+    if test_text:
+        test_lines = []
+        with open(test_text, 'r') as f:
+            for l in f:
+                test_lines.append(l.lower())
+        n_test_lines = len(test_lines)
+
+
+    uidx = 0
+    estop = False
+    for eidx in xrange(max_epochs):
+        n_samples = 0
+
+        if 'start' in dir(train):
+            train.start()
+        for x in train:
+            n_samples += len(x)
+            uidx += 1
+            use_noise.set_value(1.)
+
+            x_noise = []
+            for xx_ in x:
+                xn_ = xx_
+                for cc, pp in zip(corruption, corruption_prob):
+                    xn_ = eval(cc)(xn_, degree=pp, use_preemb=use_preemb)
+                x_noise.append(xn_)
+            x, x_mask, x_noise, xn_mask = prepare_data(x, x_noise, 
+                                                       maxlen=maxlen, 
+                                                       n_words=n_words)
+
+            if model_options['use_preemb']:
+                shp = x_noise.shape
+                x_noise = wv_embs[x_noise.flatten()].reshape([shp[0], shp[1], wv_embs.shape[1]])
+
+            if x == None:
+                print 'Minibatch with zero sample under length ', maxlen
+                continue
+
+            if param_noise > 0.:
+                f_noise()
+                f_add_noise()
+            cost = f_grad_shared(x, x_mask, x_noise, xn_mask)
+            if param_noise > 0.:
+                f_rem_noise()
+            f_update(lrate)
+
+            if numpy.isnan(cost) or numpy.isinf(cost):
+                print 'NaN detected'
+                return 1., 1., 1.
+
+            if numpy.mod(uidx, dispFreq) == 0:
+                print 'Epoch ', eidx, 'Update ', uidx, 'Cost ', cost
+
+            if numpy.mod(uidx, saveFreq) == 0:
+                print 'Saving...',
+
+                #import ipdb; ipdb.set_trace()
+
+                if best_p != None:
+                    params = best_p
+                else:
+                    params = unzip(tparams)
+                numpy.savez(saveto, history_errs=history_errs, **params)
+                pkl.dump(model_options, open('%s.pkl'%saveto, 'wb'))
+                print 'Done'
+
+            if numpy.mod(uidx, validFreq) == 0:
+                use_noise.set_value(0.)
+                train_err = 0
+                valid_err = 0
+                test_err = 0
+                #for _, tindex in kf:
+                #    x, mask = prepare_data(train[0][train_index])
+                #    train_err += (f_pred(x, mask) == train[1][tindex]).sum()
+                #train_err = 1. - numpy.float32(train_err) / train[0].shape[0]
+
+                #train_err = pred_error(f_pred, prepare_data, train, kf)
+                if valid_text != None:
+                    valid_err = perplexity(f_cost, valid_lines, worddict, model_options, wv_embs=wv_embs)
+                if test_text != None:
+                    test_err = perplexity(f_cost, test_lines, worddict, model_options, wv_embs=wv_embs)
+
+                history_errs.append([valid_err, test_err])
+
+                if len(history_errs) > 1:
+                    if uidx == 0 or valid_err <= numpy.array(history_errs)[:,0].min():
+                        best_p = unzip(tparams)
+                        bad_counter = 0
+                    if eidx > patience and valid_err >= numpy.array(history_errs)[:-patience,0].min():
+                        bad_counter += 1
+                        if bad_counter > patience:
+                            print 'Early Stop!'
+                            estop = True
+                            break
+
+                print 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err
+
+        #print 'Epoch ', eidx, 'Update ', uidx, 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err
+
+        print 'Seen %d samples'%n_samples
+
+        if estop:
+            break
+
+    if best_p is not None: 
+        zipp(best_p, tparams)
+
+    use_noise.set_value(0.)
+    train_err = 0
+    valid_err = 0
+    test_err = 0
+    #train_err = pred_error(f_pred, prepare_data, train, kf)
+    if valid_text != None:
+        valid_err = perplexity(f_cost, valid_lines, worddict, model_options, wv_embs=wv_embs)
+    if test_text != None:
+        test_err = perplexity(f_cost, test_lines, worddict, model_options, wv_embs=wv_embs)
+
+    print 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err
+
+    params = copy.copy(best_p)
+    numpy.savez(saveto, zipped_params=best_p, train_err=train_err, 
+                valid_err=valid_err, test_err=test_err, history_errs=history_errs, 
+                **params)
+
+    return train_err, valid_err, test_err
+
+
+
+if __name__ == '__main__':
+    pass
+
+
+
+
+
+
+
+
+
+
+
+
+    
+
 
 
