@@ -16,7 +16,7 @@ from sklearn.cross_validation import KFold
 
 from nltk.tokenize import wordpunct_tokenize
 
-import wiki, book, msrp
+import book
 
 profile = False
 datasets = {'book': book.load_data}
@@ -784,10 +784,10 @@ def train(dim_word=100, # word vector dimensionality
           decoder='gru_cond',
           dataset='wiki',
           use_preemb=True,
-          embeddings='data/D_cbow_pdw_8B.pkl',
-          dictionary='data/model_rnn_wiki.npz.pkl',
-          valid_text='newsdev.tok.en',
-          test_text='newstest.tok.en',
+          embeddings='../Files/D_medium_cbow_pdw_8B.pkl',
+          dictionary='../Files/dict.pkl',
+          valid_text='../Files/newsdev.tok.en',
+          test_text='../Files/newstest.tok.en',
           use_dropout=False,
           reload_=False):
 

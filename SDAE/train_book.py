@@ -46,8 +46,8 @@ if __name__ == '__main__':
              'learning-rate': [0.01],
              'encoder': ['gru'],
              'decoder': ['gru_cond'],
-             'use_preemb': [False],
+             'use_preemb': [True],
              'reload': [False],
              'dictionary': ['../Files/books_test_small.txt.dict.pkl'],
-             'embeddings': ['../Files/D_medium_cbow.pjk']})
+             'embeddings': ['../Files/D_medium_cbow_pdw_8B.pkl']})
 

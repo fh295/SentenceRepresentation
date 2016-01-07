@@ -39,7 +39,7 @@ To train a model with pre-trained word embeddings (which are mapped into the RNN
 
 {'theword': numpy.array([a word embedding],dtype=float32) for 'theword' in your vocabulary}
 
-This object (a python dictionary) needs to be saved as a pickle file (using cPickle). Then set use_preemb to True 
+This object (a python dictionary) needs to be saved as a pickle file (using cPickle). Then, in train_book.py, set use_preemb to True and set embeddings to this file. 
 
 
 
