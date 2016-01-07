@@ -49,5 +49,21 @@ if __name__ == '__main__':
              'use_preemb': [True],
              'reload': [False],
              'dictionary': ['../Files/books_test_small.txt.dict.pkl'],
-             'embeddings': ['../Files/D_medium_cbow_pdw_8B.pkl']})
+             'embeddings': ['../Files/D_medium_cbow_pdw_8B.pkl'],
+             'valid_text': ['../Files/newsdev.tok.en'],
+             'test_text': ['../Files/newstest.tok.en']})
+
+# model: path/name.npz for your trained model
+# dim_word: dimension of word embedding (if use_preemb = False)
+# dim: dimension of RNN (GRU) hidden states (and sentence vector)
+# n-words: size of vocab
+# optimizer: optimization algorithm
+# decay-c: GRU gates decay
+# clip-c: gradient clipping
+# corrpution: noise process  _mask => omit words _shuffle => shuffle (p_o and p_x in paper)
+# encoder/decoder: architecture for encoder and decoder
+# use_preemb: set to True to use pre-trained word embeddings
+# reload: set to True if reloading a model (in the model: option) for more training
+# embeddings: path to pre-trained word embedddings (if use_preemb = True)
+# valid/test_text: text (sentences) to compute validation error during training
 

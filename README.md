@@ -26,7 +26,7 @@ To train an SDAE
 
 Move to the SDAE directory. 
 
-- Build a dictionary for your corpus. Run 'python build_dictionary.py --filename path/to/your/corpus.txt. The corpus should meet the same specifications as for FastSent (above). 
+- Build a dictionary for your corpus. Run 'python build_dictionary.py --filename path/to/your/corpus.txt'. The corpus should meet the same specifications as for FastSent (above). 
 
 - Open book.py and set the path to the dictionary to be the new dictionary created by this process (you only need to do this once). Set the path to the corpus to point to the corpus itself. 
 
