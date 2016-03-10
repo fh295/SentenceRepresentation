@@ -20,7 +20,7 @@ if 'gensim' in libs:
     print 'using sentrep model not cbow'
     rep = 'sentrep'
     
-from gensim.models.word2vec import Word2Vec
+from gensim.models.fastsent import FastSent
 args = parser.parse_args()
 
 if args.autoencode:
@@ -42,7 +42,7 @@ sentfile = args.corpus
 
 if 'gensim' in libs:
     sentences = MySentences(sentfile)
-    model = Word2Vec(sg=0,hs=1,cbow_mean=0,min_count=args.min_count, size=args.dim , autoencode=autoencode_flag, sample=args.sample)
+    model = FastSent(workers=1,fastsent_mean=0,min_count=args.min_count, size=args.dim , autoencode=autoencode_flag, sample=args.sample)
 
 model.build_vocab(sentences)
 model.train(sentences, chunksize=1000)
